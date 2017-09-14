@@ -22,6 +22,11 @@ import java.util.List;
 
 import javax.annotation.Nullable;
 import javax.xml.XMLConstants;
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.ParserConfigurationException;
+import javax.xml.transform.Source;
+import javax.xml.transform.dom.DOMSource;
 import javax.xml.transform.sax.SAXSource;
 import javax.xml.transform.stream.StreamSource;
 import javax.xml.validation.Schema;
@@ -51,6 +56,7 @@ import org.raml.yagi.framework.nodes.StringNodeImpl;
 import org.raml.yagi.framework.nodes.jackson.JNodeParser;
 import org.raml.yagi.framework.nodes.snakeyaml.NodeParser;
 import org.raml.yagi.framework.phase.Phase;
+import org.w3c.dom.Document;
 import org.xml.sax.Attributes;
 import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
@@ -190,15 +196,57 @@ public class ExampleValidationPhase implements Phase
             final SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
             final Schema schema1 = factory.newSchema(new StreamSource(new StringReader(xsd.toString())));
             final Validator validator = schema1.newValidator();
-            validator.validate(new SAXSource(
-                    new NamespaceFilter(XMLReaderFactory.createXMLReader(), TypeToXmlSchemaVisitor.getTargetNamespace(resolvedType)),
-                    new InputSource(new StringReader(value))));
+
+            //validator.validate(new SAXSource(
+            //        new NamespaceFilter(XMLReaderFactory.createXMLReader(), TypeToXmlSchemaVisitor.getTargetNamespace(resolvedType)),
+            //        new InputSource(new StringReader(value))));
+
+            validator.validate(getSource(value));
         }
-        catch (IOException | SAXException e)
+        catch (IOException | SAXException | ParserConfigurationException e)
         {
             return ErrorNodeFactory.createInvalidXmlExampleNode(e.getMessage());
         }
         return null;
+    }
+
+    private Source getSource(String value) throws ParserConfigurationException, IOException, SAXException
+    {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        setFeatures(factory);
+
+        DocumentBuilder builder = factory.newDocumentBuilder();
+        builder.setErrorHandler(null);
+        Document document = builder.parse(new InputSource(new StringReader(value)));
+        return new DOMSource(document.getDocumentElement());
+    }
+
+    public static final String EXTERNAL_ENTITIES_PROPERTY = "raml.xml.expandExternalEntities";
+    public static final String EXPAND_ENTITIES_PROPERTY = "raml.xml.expandInternalEntities";
+
+    private static final Boolean externalEntities =
+            Boolean.parseBoolean(System.getProperty(EXTERNAL_ENTITIES_PROPERTY, "false"));
+    private static final Boolean expandEntities =
+            Boolean.parseBoolean(System.getProperty(EXPAND_ENTITIES_PROPERTY, "false"));
+
+    private void setFeatures(DocumentBuilderFactory dbf) throws ParserConfigurationException
+    {
+        String feature = null;
+
+        // If you can't completely disable DTDs, then at least do the following:
+        feature = "http://xml.org/sax/features/external-general-entities";
+        dbf.setFeature(feature, externalEntities);
+
+        feature = "http://xml.org/sax/features/external-parameter-entities";
+        dbf.setFeature(feature, externalEntities);
+
+        feature = "http://apache.org/xml/features/disallow-doctype-decl";
+        dbf.setFeature(feature, !expandEntities);
+
+        // and these as well, per Timothy Morgan's 2014 paper: "XML Schema, DTD, and Entity Attacks" (see reference below)
+        dbf.setXIncludeAware(expandEntities);
+        dbf.setExpandEntityReferences(expandEntities);
+        dbf.setNamespaceAware(true);
     }
 
     private boolean isXmlValue(String value)
